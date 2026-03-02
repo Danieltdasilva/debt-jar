@@ -6,20 +6,22 @@ It allows users to add their list of **debts** and **amounts**, keeps a running 
 ---
 
 ## Features
-- Add **income** or **expense** transactions with:
-  - Date
-  - Description
-  - Type (Income or Expense)
-  - Amount
+- Add **debts** transactions with:
+  - names
+  - amount owed
+  - min payment
+  - snowball payment
+  - current balance
+  - percentage remaining
 - Transactions display as a **list** with a delete button.
-- **Total balance** automatically updates.
-- Entries are styled with:
-  - Green accent for income
-  - Red accent for expenses
-- **Persistent storage** using `MongoDB and Mongoose`.
+- **Total balance** manually updates with the user's input.
 - Clean, responsive UI.
+<?**Persistent storage** using `MongoDB and Mongoose`.?>
+
+## more changes to the README file coming soon.
 
 ---
+<?
 
 ## Technologies Used
 - **HTML5**
@@ -34,13 +36,6 @@ It allows users to add their list of **debts** and **amounts**, keeps a running 
 ## Architecture
 
 The application follows a simple full-stack architecture:
-
-Client (Vanilla JS)<br>
-    ↓<br>
-Express REST API<br>
-    ↓<br>
-MongoDB Atlas<br>
-
 Authentication Flow:
 1. User logs in
 2. Server issues JWT
@@ -83,3 +78,5 @@ The project is structured to support API-level test automation, including:
 - State-driven UI rendering
 
 Future work includes integrating automated API tests into CI/CD pipelines.
+
+?>
