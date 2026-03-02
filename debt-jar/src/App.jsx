@@ -2,60 +2,121 @@ import { useState, useEffect } from "react";
 import "./App.css";
 
 function App() {
-  const [initialDebt, setInitialDebt] = useState(10000);
-  const [currentDebt, setCurrentDebt] = useState(10000);
+  const [debts, setDebts] = useState([]);
+  const [newDebtName, setNewDebtName] = useState("");
+  const [newDebtAmount, setNewDebtAmount] = useState("");
 
-  // Load saved data
+  // Load from localStorage
   useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem("debtData"));
+    const saved = JSON.parse(localStorage.getItem("debts"));
     if (saved) {
-      setInitialDebt(saved.initialDebt);
-      setCurrentDebt(saved.currentDebt);
+      setDebts(saved);
     }
   }, []);
 
-  // Save data
+  // Save to localStorage
   useEffect(() => {
-    localStorage.setItem(
-      "debtData",
-      JSON.stringify({ initialDebt, currentDebt })
+    localStorage.setItem("debts", JSON.stringify(debts));
+  }, [debts]);
+
+  const addDebt = () => {
+    if (!newDebtName || !newDebtAmount) return;
+
+    const amount = Number(newDebtAmount);
+
+    const newDebt = {
+      id: Date.now(),
+      name: newDebtName,
+      initialAmount: amount,
+      currentAmount: amount,
+    };
+
+    setDebts((prev) => [...prev, newDebt]);
+    setNewDebtName("");
+    setNewDebtAmount("");
+  };
+
+  const updateDebt = (id, newAmount) => {
+    setDebts((prev) =>
+      prev.map((debt) =>
+        debt.id === id
+          ? {
+            ...debt,
+            currentAmount: newAmount < 0 ? 0 : newAmount,
+          }
+          : debt
+      )
     );
-  }, [initialDebt, currentDebt]);
+  };
+
+  // Derived totals
+  const totalInitialDebt = debts.reduce(
+    (sum, debt) => sum + debt.initialAmount,
+    0
+  );
+
+  const totalCurrentDebt = debts.reduce(
+    (sum, debt) => sum + debt.currentAmount,
+    0
+  );
 
   const percentageRemaining =
-    initialDebt > 0 ? (currentDebt / initialDebt) * 100 : 0;
+    totalInitialDebt > 0
+      ? (totalCurrentDebt / totalInitialDebt) * 100
+      : 0;
 
   return (
     <div className="container">
       <h1>Debt Jar</h1>
 
-      <div className="inputs">
-        <label>
-          Initial Debt:
-          <input
-            type="number"
-            value={initialDebt}
-            onChange={(e) => setInitialDebt(Number(e.target.value))}
-          />
-        </label>
+      {/* Add Debt Section */}
+      <div className="add-debt">
+        <input
+          type="text"
+          placeholder="Debt Name"
+          value={newDebtName}
+          onChange={(e) => setNewDebtName(e.target.value)}
+        />
 
-        <label>
-          Current Debt:
-          <input
-            type="number"
-            value={currentDebt}
-            onChange={(e) => setCurrentDebt(Number(e.target.value))}
-          />
-        </label>
+        <input
+          type="number"
+          placeholder="Amount"
+          value={newDebtAmount}
+          onChange={(e) => setNewDebtAmount(e.target.value)}
+        />
+
+        <button onClick={addDebt}>Add</button>
       </div>
 
+      {/* Debt List */}
+      <div className="debt-list">
+        {debts.map((debt) => (
+          <div
+            key={debt.id}
+            className={`debt-item ${debt.currentAmount === 0 ? "paid" : ""
+              }`}
+          >
+            <span>{debt.name}</span>
+
+            <input
+              type="number"
+              value={debt.currentAmount}
+              onChange={(e) =>
+                updateDebt(debt.id, Number(e.target.value))
+              }
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Jar Visualization */}
       <div className="jar">
         <div
           className="jar-fill"
           style={{ height: `${percentageRemaining}%` }}
         />
         <div className="jar-text">
-          ${currentDebt.toLocaleString()}
+          ${totalCurrentDebt.toLocaleString()}
         </div>
       </div>
 
