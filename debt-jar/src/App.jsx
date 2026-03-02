@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import "./App.scss";
+import "./App.css";
 
 function App() {
-  const [initialDebt, setInitialDebt] = useState(20000);
-  const [currentDebt, setCurrentDebt] = useState(20000);
+  const [initialDebt, setInitialDebt] = useState(10000);
+  const [currentDebt, setCurrentDebt] = useState(10000);
 
   // Load saved data
   useEffect(() => {
