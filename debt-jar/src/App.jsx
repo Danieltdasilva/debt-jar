@@ -1,12 +1,38 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import "./App.css";
+import { loadData, saveData } from "./utils/storage";
 
 function App() {
-  const [debts, setDebts] = useState([]);
-  const [expectedPayoffDate, setExpectedPayoffDate] = useState("");
-  const [actualPayoffDate, setActualPayoffDate] = useState(null);
+  // Create ref for debt name input to focus after adding
+  const debtNameRef = useRef(null);
+
+  // Initialize state lazily from localStorage
+  const [debts, setDebts] = useState(() => {
+    const saved = loadData();
+    return saved?.debts || [];
+  });
+
+  const [expectedPayoffDate, setExpectedPayoffDate] = useState(() => {
+    const saved = loadData();
+    return saved?.expectedPayoffDate || "";
+  });
+
+  const [actualPayoffDate, setActualPayoffDate] = useState(() => {
+    const saved = loadData();
+    return saved?.actualPayoffDate || null;
+  });
+
+  const [sortDirection, setSortDirection] = useState(() => {
+    const saved = loadData();
+    return saved?.sortDirection || null;
+  });
+
+  const [payoffMonths, setPayoffMonths] = useState(() => {
+    const saved = loadData();
+    return saved?.payoffMonths || "";
+  });
+
   // sorting direction for amounts: "asc" | "desc" | null
-  const [sortDirection, setSortDirection] = useState(null);
   // track the debt currently being edited (null when not editing)
   const [editingId, setEditingId] = useState(null);
   const [editingValues, setEditingValues] = useState({
@@ -24,24 +50,10 @@ function App() {
     snowballPayment: "",
   });
 
-  // Load from localStorage
+  // Save to localStorage whenever data changes
   useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem("snowballData"));
-    if (saved) {
-      setDebts(saved.debts);
-      setExpectedPayoffDate(saved.expectedPayoffDate || "");
-      setActualPayoffDate(saved.actualPayoffDate || null);
-      // originalTotalDebt is derived, so no need to restore it separately
-    }
-  }, []);
-
-  // Save to localStorage
-  useEffect(() => {
-    localStorage.setItem(
-      "snowballData",
-      JSON.stringify({ debts, expectedPayoffDate, actualPayoffDate })
-    );
-  }, [debts, expectedPayoffDate, actualPayoffDate]);
+    saveData({ debts, expectedPayoffDate, actualPayoffDate, sortDirection, payoffMonths });
+  }, [debts, expectedPayoffDate, actualPayoffDate, sortDirection, payoffMonths]);
 
   const handleChange = (e) => {
     setNewDebt({
@@ -101,13 +113,17 @@ function App() {
     if (!newDebt.name || !newDebt.amount) return;
 
     const amount = Number(newDebt.amount);
+    const months = payoffMonths ? Number(payoffMonths) : 0;
+
+    // Auto-calculate min payment if payoff months is set
+    const calculatedMinPayment = months > 0 ? Math.round((amount / months) * 100) / 100 : Number(newDebt.minPayment) || 0;
 
     const debtToAdd = {
       id: Date.now(),
       name: newDebt.name,
       originalAmount: amount,
       currentAmount: amount,
-      minPayment: Number(newDebt.minPayment) || 0,
+      minPayment: calculatedMinPayment,
       snowballPayment: Number(newDebt.snowballPayment) || 0,
     };
 
@@ -119,6 +135,11 @@ function App() {
       minPayment: "",
       snowballPayment: "",
     });
+
+    // Focus back to debt name input after adding
+    if (debtNameRef.current) {
+      debtNameRef.current.focus();
+    }
   };
 
   const updateCurrentAmount = (id, newAmount) => {
@@ -180,222 +201,260 @@ function App() {
     }
   }, [totalCurrentDebt, debts.length, actualPayoffDate]);
 
+  // Recalculate all min payments when payoff timeline changes
+  useEffect(() => {
+    if (payoffMonths && Number(payoffMonths) > 0) {
+      setDebts((prev) =>
+        prev.map((debt) => ({
+          ...debt,
+          minPayment: Math.round((debt.originalAmount / Number(payoffMonths)) * 100) / 100,
+        }))
+      );
+    }
+  }, [payoffMonths]);
+
   return (
-    <div className="container" style={{ display: "flex", gap: "3rem" }}>
-      <div style={{ flex: 1 }}>
-        <h1>Debt Jar</h1>
+    <div className="container" style={{ display: "flex", gap: "3rem", height: "100vh", overflow: "hidden" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ position: "sticky", top: 0, backgroundColor: "#242424", paddingBottom: "1rem", zIndex: 10, borderBottom: "1px solid #646262" }}>
+          <h1>Debt Jar</h1>
 
-        {/* Original Total Section */}
-        {/* originalTotalDebt is calculated automatically from debts */}
-        <div>
-          <strong>Original Total Debt: </strong>${originalTotalDebt.toLocaleString()}
-        </div>
-        <div style={{ marginTop: "0.5rem" }}>
-          <strong>Total Minimum Payment: </strong>${totalMinPayment.toLocaleString()}
-        </div>
+          {/* Original Total Section */}
+          {/* originalTotalDebt is calculated automatically from debts */}
+          <div>
+            <strong>Original Total Debt: </strong>${originalTotalDebt.toLocaleString()}
+          </div>
+          <div style={{ marginTop: "0.5rem" }}>
+            <strong>Total Minimum Payment: </strong>${totalMinPayment.toLocaleString()}
+          </div>
 
-        <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "#646262", borderRadius: "8px" }}>
-          <div style={{ marginBottom: "0.5rem" }}>
+          <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "#646262", borderRadius: "8px" }}>
             <label>
-              <strong>Expected Payoff Date:</strong>
+              <strong>Payoff Timeline (months):</strong>
               <input
-                type="date"
-                value={expectedPayoffDate}
-                onChange={(e) => setExpectedPayoffDate(e.target.value)}
-                style={{ marginLeft: "0.5rem" }}
+                type="number"
+                min="1"
+                value={payoffMonths}
+                onChange={(e) => setPayoffMonths(e.target.value)}
+                placeholder="e.g., 6"
+                style={{ marginLeft: "0.5rem", width: "80px" }}
               />
             </label>
+            {payoffMonths && Number(payoffMonths) > 0 && (
+              <p style={{ marginTop: "0.5rem", fontSize: "14px", color: "#9c1313" }}>
+                Minimum payments will be auto-calculated based on this timeline.
+              </p>
+            )}
           </div>
-          <div>
-            <strong>Actual Payoff Date:</strong>
-            <span style={{ marginLeft: "0.5rem" }}>
-              {actualPayoffDate
-                ? new Date(actualPayoffDate).toLocaleDateString()
-                : "Not yet paid off"}
-            </span>
+
+          <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "#646262", borderRadius: "8px" }}>
+            <div style={{ marginBottom: "0.5rem" }}>
+              <label>
+                <strong>Expected Payoff Date:</strong>
+                <input
+                  type="date"
+                  value={expectedPayoffDate}
+                  onChange={(e) => setExpectedPayoffDate(e.target.value)}
+                  style={{ marginLeft: "0.5rem" }}
+                />
+              </label>
+            </div>
+            <div>
+              <strong>Actual Payoff Date:</strong>
+              <span style={{ marginLeft: "0.5rem" }}>
+                {actualPayoffDate
+                  ? new Date(actualPayoffDate).toLocaleDateString()
+                  : "Not yet paid off"}
+              </span>
+            </div>
           </div>
+
+          <hr />
         </div>
 
-        <hr />
+        <div style={{ flex: 1, overflow: "auto", paddingRight: "1rem" }}>
+          {/* Add Debt Form */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              addDebt();
+            }}
+          >
+            <input
+              ref={debtNameRef}
+              name="name"
+              placeholder="Debt Name"
+              value={newDebt.name}
+              onChange={handleChange}
+            />
+            <input
+              name="amount"
+              type="number"
+              placeholder="Amount Owed"
+              value={newDebt.amount}
+              onChange={handleChange}
+            />
+            <input
+              name="minPayment"
+              type="number"
+              placeholder="Min Payment"
+              value={newDebt.minPayment}
+              onChange={handleChange}
+              disabled={payoffMonths && Number(payoffMonths) > 0}
+              title={payoffMonths && Number(payoffMonths) > 0 ? "Auto-calculated from payoff timeline" : ""}
+            />
+            <input
+              name="snowballPayment"
+              type="number"
+              placeholder="Snowball Payment"
+              value={newDebt.snowballPayment}
+              onChange={handleChange}
+            />
 
-        {/* Add Debt Form */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            addDebt();
-          }}
-        >
-          <input
-            name="name"
-            placeholder="Debt Name"
-            value={newDebt.name}
-            onChange={handleChange}
-          />
-          <input
-            name="amount"
-            type="number"
-            placeholder="Amount Owed"
-            value={newDebt.amount}
-            onChange={handleChange}
-          />
-          <input
-            name="minPayment"
-            type="number"
-            placeholder="Min Payment"
-            value={newDebt.minPayment}
-            onChange={handleChange}
-          />
-          <input
-            name="snowballPayment"
-            type="number"
-            placeholder="Snowball Payment"
-            value={newDebt.snowballPayment}
-            onChange={handleChange}
-          />
+            <button type="submit">Add Debt</button>
+          </form>
 
-          <button type="submit">Add Debt</button>
-        </form>
+          <hr />
 
-        <hr />
-
-        {/* Sorting Controls */}
-        <div style={{ marginBottom: "1rem" }}>
-          <label>
-            Order by amount:
-            <select
-              value={sortDirection || ""}
-              onChange={(e) =>
-                setSortDirection(e.target.value || null)
-              }
-              style={{ marginLeft: "0.5rem" }}
-            >
-              <option value="">None</option>
-              <option value="asc">Smallest → Largest</option>
-              <option value="desc">Largest → Smallest</option>
-            </select>
-          </label>
-        </div>
-
-        <hr />
-
-        {/* Debt Table */}
-        <table
-          border="1"
-          width="100%"
-          style={{
-            borderCollapse: "collapse",
-            tableLayout: "auto",
-          }}
-        >
-          <thead>
-            <tr>
-              <th style={{ minWidth: "150px", wordWrap: "break-word" }}>Debt Name</th>
-              <th>Amount Owed</th>
-              <th>Min Payment</th>
-              <th>Snowball Payment</th>
-              <th>Current Balance</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedDebts.map((debt) => (
-              <tr
-                key={debt.id}
-                style={{
-                  textDecoration:
-                    debt.currentAmount === 0 ? "line-through" : "none",
-                }}
+          {/* Sorting Controls */}
+          <div style={{ marginBottom: "1rem" }}>
+            <label>
+              Order by amount:
+              <select
+                value={sortDirection || ""}
+                onChange={(e) =>
+                  setSortDirection(e.target.value || null)
+                }
+                style={{ marginLeft: "0.5rem" }}
               >
-                {editingId === debt.id ? (
-                  <>
-                    <td>
-                      <input
-                        name="name"
-                        value={editingValues.name}
-                        onChange={handleEditChange}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        name="originalAmount"
-                        type="number"
-                        value={editingValues.originalAmount}
-                        onChange={handleEditChange}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        name="minPayment"
-                        type="number"
-                        value={editingValues.minPayment}
-                        onChange={handleEditChange}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        name="snowballPayment"
-                        type="number"
-                        value={editingValues.snowballPayment}
-                        onChange={handleEditChange}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        name="currentAmount"
-                        type="number"
-                        value={editingValues.currentAmount}
-                        onChange={handleEditChange}
-                      />
-                    </td>
-                    <td>
-                      <button onClick={saveEdit}>Save</button>
-                      <button onClick={cancelEditing}>Cancel</button>
-                    </td>
-                  </>
-                ) : (
-                  <>
-                    <td>{debt.name}</td>
-                    <td>${debt.originalAmount}</td>
-                    <td>${debt.minPayment}</td>
-                    <td>${debt.snowballPayment}</td>
-                    <td>
-                      <input
-                        type="number"
-                        value={debt.currentAmount}
-                        onChange={(e) =>
-                          updateCurrentAmount(
-                            debt.id,
-                            Number(e.target.value)
-                          )
-                        }
-                      />
-                    </td>
-                    <td>
-                      <button onClick={() => startEditing(debt)}>
-                        Edit
-                      </button>
-                      <button
-                        style={{ marginLeft: "0.5rem" }}
-                        onClick={() => deleteDebt(debt.id)}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </>
-                )}
+                <option value="">None</option>
+                <option value="asc">Smallest → Largest</option>
+                <option value="desc">Largest → Smallest</option>
+              </select>
+            </label>
+          </div>
+
+          <hr />
+
+          {/* Debt Table */}
+          <table
+            border="1"
+            width="100%"
+            style={{
+              borderCollapse: "collapse",
+              tableLayout: "auto",
+            }}
+          >
+            <thead>
+              <tr>
+                <th style={{ minWidth: "150px", wordWrap: "break-word" }}>Debt Name</th>
+                <th>Amount Owed</th>
+                <th>Min Payment</th>
+                <th>Snowball Payment</th>
+                <th>Current Balance</th>
+                <th>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sortedDebts.map((debt) => (
+                <tr
+                  key={debt.id}
+                  style={{
+                    textDecoration:
+                      debt.currentAmount === 0 ? "line-through" : "none",
+                  }}
+                >
+                  {editingId === debt.id ? (
+                    <>
+                      <td>
+                        <input
+                          name="name"
+                          value={editingValues.name}
+                          onChange={handleEditChange}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          name="originalAmount"
+                          type="number"
+                          value={editingValues.originalAmount}
+                          onChange={handleEditChange}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          name="minPayment"
+                          type="number"
+                          value={editingValues.minPayment}
+                          onChange={handleEditChange}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          name="snowballPayment"
+                          type="number"
+                          value={editingValues.snowballPayment}
+                          onChange={handleEditChange}
+                        />
+                      </td>
+                      <td>
+                        <input
+                          name="currentAmount"
+                          type="number"
+                          value={editingValues.currentAmount}
+                          onChange={handleEditChange}
+                        />
+                      </td>
+                      <td>
+                        <button onClick={saveEdit}>Save</button>
+                        <button onClick={cancelEditing}>Cancel</button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td>{debt.name}</td>
+                      <td>${debt.originalAmount}</td>
+                      <td>${debt.minPayment}</td>
+                      <td>${debt.snowballPayment}</td>
+                      <td>
+                        <input
+                          type="number"
+                          value={debt.currentAmount}
+                          onChange={(e) =>
+                            updateCurrentAmount(
+                              debt.id,
+                              Number(e.target.value)
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <button onClick={() => startEditing(debt)}>
+                          Edit
+                        </button>
+                        <button
+                          style={{ marginLeft: "0.5rem" }}
+                          onClick={() => deleteDebt(debt.id)}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
-        <hr />
+          <hr />
 
-        {/* Totals */}
-        <h3>Total Remaining: ${totalCurrentDebt.toLocaleString()}</h3>
-        <h3>Total Paid: ${totalPaid.toLocaleString()}</h3>
-        <h3>
-          {percentageRemaining.toFixed(1)}% Remaining
-        </h3>
+          {/* Totals */}
+          <h3>Total Remaining: ${totalCurrentDebt.toLocaleString()}</h3>
+          <h3>Total Paid: ${totalPaid.toLocaleString()}</h3>
+          <h3>
+            {percentageRemaining.toFixed(1)}% Remaining
+          </h3>
+        </div>
       </div>
 
       {/* Jar Visualization on the Right */}
