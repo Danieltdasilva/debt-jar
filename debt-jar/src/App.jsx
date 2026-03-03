@@ -141,6 +141,11 @@ function App() {
     0
   );
 
+  const totalMinPayment = debts.reduce(
+    (sum, debt) => sum + debt.minPayment,
+    0
+  );
+
   // compute original total debt from the list
   const originalTotalDebt = debts.reduce(
     (sum, debt) => sum + debt.originalAmount,
@@ -184,6 +189,9 @@ function App() {
         {/* originalTotalDebt is calculated automatically from debts */}
         <div>
           <strong>Original Total Debt: </strong>${originalTotalDebt.toLocaleString()}
+        </div>
+        <div style={{ marginTop: "0.5rem" }}>
+          <strong>Total Minimum Payment: </strong>${totalMinPayment.toLocaleString()}
         </div>
 
         <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "#646262", borderRadius: "8px" }}>
@@ -271,10 +279,17 @@ function App() {
         <hr />
 
         {/* Debt Table */}
-        <table border="1" width="100%">
+        <table
+          border="1"
+          width="100%"
+          style={{
+            borderCollapse: "collapse",
+            tableLayout: "auto",
+          }}
+        >
           <thead>
             <tr>
-              <th>Debt Name</th>
+              <th style={{ minWidth: "150px", wordWrap: "break-word" }}>Debt Name</th>
               <th>Amount Owed</th>
               <th>Min Payment</th>
               <th>Snowball Payment</th>
