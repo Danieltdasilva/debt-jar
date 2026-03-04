@@ -1,36 +1,35 @@
 import { useState, useEffect, useRef } from "react";
 import "./App.css";
-import { loadData, saveData } from "./utils/storage";
+import { migrateDataToMongoDB } from "./utils/migration";
+import { api } from "./utils/api";
 
 function App() {
   // Create ref for debt name input to focus after adding
   const debtNameRef = useRef(null);
 
-  // Initialize state lazily from localStorage
-  const [debts, setDebts] = useState(() => {
-    const saved = loadData();
-    return saved?.debts || [];
-  });
+  const [debts, setDebts] = useState([]);
+  const [expectedPayoffDate, setExpectedPayoffDate] = useState("");
+  const [sortDirection, setSortDirection] = useState(null);
+  const [payoffMonths, setPayoffMonths] = useState("");
 
-  const [expectedPayoffDate, setExpectedPayoffDate] = useState(() => {
-    const saved = loadData();
-    return saved?.expectedPayoffDate || "";
-  });
+  // Load debts from API
+  const loadDebts = async () => {
+    try {
+      const debtsData = await api.getDebts();
+      setDebts(debtsData);
+    } catch (error) {
+      console.error("Failed to load debts:", error);
+    }
+  };
 
-  const [actualPayoffDate, setActualPayoffDate] = useState(() => {
-    const saved = loadData();
-    return saved?.actualPayoffDate || null;
-  });
-
-  const [sortDirection, setSortDirection] = useState(() => {
-    const saved = loadData();
-    return saved?.sortDirection || null;
-  });
-
-  const [payoffMonths, setPayoffMonths] = useState(() => {
-    const saved = loadData();
-    return saved?.payoffMonths || "";
-  });
+  // Run migration script on component mount, then load debts
+  useEffect(() => {
+    const initializeApp = async () => {
+      await migrateDataToMongoDB();
+      await loadDebts();
+    };
+    initializeApp();
+  }, []);
 
   // sorting direction for amounts: "asc" | "desc" | null
   // track the debt currently being edited (null when not editing)
@@ -50,11 +49,6 @@ function App() {
     snowballPayment: "",
   });
 
-  // Save to localStorage whenever data changes
-  useEffect(() => {
-    saveData({ debts, expectedPayoffDate, actualPayoffDate, sortDirection, payoffMonths });
-  }, [debts, expectedPayoffDate, actualPayoffDate, sortDirection, payoffMonths]);
-
   const handleChange = (e) => {
     setNewDebt({
       ...newDebt,
@@ -70,7 +64,7 @@ function App() {
   };
 
   const startEditing = (debt) => {
-    setEditingId(debt.id);
+    setEditingId(debt._id);
     setEditingValues({
       name: debt.name,
       originalAmount: debt.originalAmount,
@@ -84,32 +78,42 @@ function App() {
     setEditingId(null);
   };
 
-  const saveEdit = () => {
-    setDebts((prev) =>
-      prev.map((d) =>
-        d.id === editingId
-          ? {
-            ...d,
-            name: editingValues.name,
-            originalAmount: Number(editingValues.originalAmount),
-            minPayment: Number(editingValues.minPayment) || 0,
-            snowballPayment: Number(editingValues.snowballPayment) || 0,
-            currentAmount: Number(editingValues.currentAmount),
-          }
-          : d
-      )
-    );
-    cancelEditing();
-  };
+  const saveEdit = async () => {
+    try {
+      const updatedDebt = await api.updateDebt(editingId, {
+        name: editingValues.name,
+        originalAmount: Number(editingValues.originalAmount),
+        minPayment: Number(editingValues.minPayment) || 0,
+        snowballPayment: Number(editingValues.snowballPayment) || 0,
+        currentAmount: Number(editingValues.currentAmount),
+      });
 
-  const deleteDebt = (id) => {
-    setDebts((prev) => prev.filter((d) => d.id !== id));
-    if (editingId === id) {
+      // Update local state
+      setDebts((prev) =>
+        prev.map((d) =>
+          d._id === editingId ? updatedDebt : d
+        )
+      );
       cancelEditing();
+    } catch (error) {
+      console.error("Failed to save edit:", error);
     }
   };
 
-  const addDebt = () => {
+  const deleteDebt = async (id) => {
+    try {
+      await api.deleteDebt(id);
+      // Update local state
+      setDebts((prev) => prev.filter((d) => d._id !== id));
+      if (editingId === id) {
+        cancelEditing();
+      }
+    } catch (error) {
+      console.error("Failed to delete debt:", error);
+    }
+  };
+
+  const addDebt = async () => {
     if (!newDebt.name || !newDebt.amount) return;
 
     const amount = Number(newDebt.amount);
@@ -118,44 +122,62 @@ function App() {
     // Auto-calculate min payment if payoff months is set
     const calculatedMinPayment = months > 0 ? Math.round((amount / months) * 100) / 100 : Number(newDebt.minPayment) || 0;
 
-    const debtToAdd = {
-      id: Date.now(),
-      name: newDebt.name,
-      originalAmount: amount,
-      currentAmount: amount,
-      minPayment: calculatedMinPayment,
-      snowballPayment: Number(newDebt.snowballPayment) || 0,
-    };
+    try {
+      const newDebtData = await api.createDebt({
+        name: newDebt.name,
+        originalAmount: amount,
+        currentAmount: amount,
+        minPayment: calculatedMinPayment,
+        snowballPayment: Number(newDebt.snowballPayment) || 0,
+      });
 
-    setDebts((prev) => [...prev, debtToAdd]);
+      // Add the new debt to local state
+      setDebts((prev) => [...prev, newDebtData]);
 
-    setNewDebt({
-      name: "",
-      amount: "",
-      minPayment: "",
-      snowballPayment: "",
-    });
+      setNewDebt({
+        name: "",
+        amount: "",
+        minPayment: "",
+        snowballPayment: "",
+      });
 
-    // Focus back to debt name input after adding
-    if (debtNameRef.current) {
-      debtNameRef.current.focus();
+      // Focus back to debt name input after adding
+      if (debtNameRef.current) {
+        debtNameRef.current.focus();
+      }
+    } catch (error) {
+      console.error("Failed to add debt:", error);
     }
   };
 
-  const updateCurrentAmount = (id, newAmount) => {
-    setDebts((prev) =>
-      prev.map((debt) =>
-        debt.id === id
-          ? { ...debt, currentAmount: newAmount < 0 ? 0 : newAmount }
-          : debt
-      )
-    );
+  const updateCurrentAmount = async (id, newAmount) => {
+    try {
+      const updatedDebt = await api.updateDebt(id, {
+        currentAmount: newAmount < 0 ? 0 : newAmount,
+      });
+
+      // Update local state
+      setDebts((prev) =>
+        prev.map((debt) =>
+          debt._id === id
+            ? updatedDebt
+            : debt
+        )
+      );
+    } catch (error) {
+      console.error("Failed to update current amount:", error);
+    }
   };
 
   const totalCurrentDebt = debts.reduce(
     (sum, debt) => sum + debt.currentAmount,
     0
   );
+
+  // Compute actual payoff date as derived value
+  const actualPayoffDate = totalCurrentDebt === 0 && debts.length > 0
+    ? new Date().toISOString().split('T')[0]
+    : null;
 
   const totalPaid = debts.reduce(
     (sum, debt) => sum + (debt.originalAmount - debt.currentAmount),
@@ -189,35 +211,33 @@ function App() {
   const jarFillPercentage =
     originalTotalDebt > 0 ? (totalPaid / originalTotalDebt) * 100 : 0;
 
-  // Track when all debts are paid (actualPayoffDate)
-  useEffect(() => {
-    if (totalCurrentDebt === 0 && debts.length > 0 && !actualPayoffDate) {
-      // Set actual payoff date to today when all debts are paid
-      const today = new Date().toISOString().split('T')[0];
-      setActualPayoffDate(today);
-    } else if (totalCurrentDebt > 0 && actualPayoffDate) {
-      // Reset if debt is added back after being fully paid
-      setActualPayoffDate(null);
-    }
-  }, [totalCurrentDebt, debts.length, actualPayoffDate]);
 
   // Recalculate all min payments when payoff timeline changes
   useEffect(() => {
     if (payoffMonths && Number(payoffMonths) > 0) {
-      setDebts((prev) =>
-        prev.map((debt) => ({
-          ...debt,
-          minPayment: Math.round((debt.originalAmount / Number(payoffMonths)) * 100) / 100,
-        }))
-      );
+      const updateMinPayments = async () => {
+        try {
+          const updatedDebts = [];
+          for (const debt of debts) {
+            const newMinPayment = Math.round((debt.originalAmount / Number(payoffMonths)) * 100) / 100;
+            const updatedDebt = await api.updateDebt(debt._id, { minPayment: newMinPayment });
+            updatedDebts.push(updatedDebt);
+          }
+          setDebts(updatedDebts);
+        } catch (error) {
+          console.error("Failed to update min payments:", error);
+        }
+      };
+      updateMinPayments();
     }
-  }, [payoffMonths]);
+  }, [payoffMonths, debts]);
 
   return (
-    <div className="container" style={{ display: "flex", gap: "3rem", height: "100vh", overflow: "hidden" }}>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ position: "sticky", top: 0, backgroundColor: "#242424", paddingBottom: "1rem", zIndex: 10, borderBottom: "1px solid #646262" }}>
-          <h1>Debt Jar</h1>
+    <div className="container">
+      <div style={{ display: "flex", gap: "3rem", alignItems: "flex-start", flexWrap: "wrap", justifyContent: "center" }}>
+        <div style={{ flex: 1, minWidth: "600px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ position: "sticky", top: 0, backgroundColor: "rgba(26, 26, 46, 0.95)", paddingBottom: "1rem", zIndex: 10, borderBottom: "2px solid #00d4ff", backdropFilter: "blur(10px)" }}>
+            <h1>Debt Jar</h1>
 
           {/* Original Total Section */}
           {/* originalTotalDebt is calculated automatically from debts */}
@@ -228,7 +248,7 @@ function App() {
             <strong>Total Minimum Payment: </strong>${totalMinPayment.toLocaleString()}
           </div>
 
-          <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "#646262", borderRadius: "8px" }}>
+          <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "rgba(26, 26, 46, 0.8)", borderRadius: "12px", border: "1px solid rgba(0, 212, 255, 0.3)", backdropFilter: "blur(10px)", boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)" }}>
             <label>
               <strong>Payoff Timeline (months):</strong>
               <input
@@ -241,13 +261,13 @@ function App() {
               />
             </label>
             {payoffMonths && Number(payoffMonths) > 0 && (
-              <p style={{ marginTop: "0.5rem", fontSize: "14px", color: "#9c1313" }}>
+              <p style={{ marginTop: "0.5rem", fontSize: "14px", color: "#ff6b6b" }}>
                 Minimum payments will be auto-calculated based on this timeline.
               </p>
             )}
           </div>
 
-          <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "#646262", borderRadius: "8px" }}>
+          <div style={{ marginTop: "1rem", padding: "1rem", backgroundColor: "rgba(26, 26, 46, 0.8)", borderRadius: "12px", border: "1px solid rgba(0, 212, 255, 0.3)", backdropFilter: "blur(10px)", boxShadow: "0 4px 16px rgba(0, 0, 0, 0.2)" }}>
             <div style={{ marginBottom: "0.5rem" }}>
               <label>
                 <strong>Expected Payoff Date:</strong>
@@ -358,13 +378,13 @@ function App() {
             <tbody>
               {sortedDebts.map((debt) => (
                 <tr
-                  key={debt.id}
+                  key={debt._id}
                   style={{
                     textDecoration:
                       debt.currentAmount === 0 ? "line-through" : "none",
                   }}
                 >
-                  {editingId === debt.id ? (
+                  {editingId === debt._id ? (
                     <>
                       <td>
                         <input
@@ -406,8 +426,8 @@ function App() {
                         />
                       </td>
                       <td>
-                        <button onClick={saveEdit}>Save</button>
-                        <button onClick={cancelEditing}>Cancel</button>
+                        <button type="button" onClick={saveEdit}>Save</button>
+                        <button type="button" onClick={cancelEditing}>Cancel</button>
                       </td>
                     </>
                   ) : (
@@ -422,19 +442,20 @@ function App() {
                           value={debt.currentAmount}
                           onChange={(e) =>
                             updateCurrentAmount(
-                              debt.id,
+                              debt._id,
                               Number(e.target.value)
                             )
                           }
                         />
                       </td>
                       <td>
-                        <button onClick={() => startEditing(debt)}>
+                        <button type="button" onClick={() => startEditing(debt)}>
                           Edit
                         </button>
                         <button
+                          type="button"
                           style={{ marginLeft: "0.5rem" }}
-                          onClick={() => deleteDebt(debt.id)}
+                          onClick={() => deleteDebt(debt._id)}
                         >
                           Delete
                         </button>
@@ -456,72 +477,17 @@ function App() {
           </h3>
         </div>
       </div>
+      </div>
 
       {/* Jar Visualization on the Right */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          minHeight: "400px",
-        }}
-      >
-        <div
-          style={{
-            position: "relative",
-            width: "120px",
-            height: "250px",
-            border: "4px solid #333",
-            borderRadius: "10px 10px 20px 20px",
-            backgroundColor: "#f5f5f5",
-            overflow: "hidden",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-          }}
-        >
-          {/* Jar Lid */}
+      <div className="jar-container">
+        <div className="jar">
+          <div className="jar-lid"></div>
           <div
-            style={{
-              position: "absolute",
-              top: "-10px",
-              left: "50%",
-              transform: "translateX(-50%)",
-              width: "100px",
-              height: "10px",
-              backgroundColor: "#333",
-              borderRadius: "5px",
-              zIndex: 10,
-            }}
+            className="jar-fill"
+            style={{ height: jarFillPercentage + '%' }}
           ></div>
-
-          {/* Liquid Fill */}
-          <div
-            style={{
-              position: "absolute",
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: `${jarFillPercentage}%`,
-              backgroundColor: "#4CAF50",
-              transition: "height 0.5s ease",
-              opacity: 0.85,
-            }}
-          ></div>
-
-          {/* Percentage Text in Jar */}
-          <div
-            style={{
-              position: "absolute",
-              top: "50%",
-              left: "50%",
-              transform: "translate(-50%, -50%)",
-              fontSize: "18px",
-              fontWeight: "bold",
-              color: jarFillPercentage > 50 ? "#fff" : "#333",
-              textShadow: jarFillPercentage > 50 ? "none" : "1px 1px 2px rgba(0,0,0,0.2)",
-              zIndex: 5,
-            }}
-          >
+          <div className="jar-text">
             {jarFillPercentage.toFixed(0)}%
           </div>
         </div>
